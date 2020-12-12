@@ -13,7 +13,6 @@ ADBLOCK_WHITE="$ADBLOCK_DIR/adblock.white"
 ADBLOCK_HOST="$ADBLOCK_DIR/adblock.host"
 ADBLOCK_IPSET="$ADBLOCK_DIR/adblock.ipset"
 ADBLOCK_IPSET_NAME="adblock-ip"
-DWS_RES="$ADBLOCK_DIR/adblock.dws"
 HOSTS_BLOCK="/opt/etc/hosts.block"
 ADBLOCK_LOG_TAG="ADBlock"
 STDERR=$1
@@ -34,9 +33,8 @@ log() {
 
 # Clearing temporary files
 clearFiles() {
-  rm -f $DWS_RES
   rm -f $ADBLOCK_IP
-  #rm -f $ADBLOCK_HOST
+  rm -f $ADBLOCK_HOST
 }
 
 # Initialize the structure of folders and files if needed
@@ -44,85 +42,32 @@ init() {
   if [ ! -d $ADBLOCK_DIR ]; then mkdir $ADBLOCK_DIR; fi
   if [ ! -f $ADBLOCK_WHITE ]; then echo -e "\n" > $ADBLOCK_WHITE; fi
   if [ ! -f $ADBLOCK_BLACK ]; then echo -e "ui.skype.com\n" > $ADBLOCK_BLACK; fi
+  if [ ! -f $ADBLOCK_IP_WHITE ]; then echo -e "13.107.3.128\n" > $ADBLOCK_IP_WHITE; fi
+  if [ ! -f $ADBLOCK_IP_BLACK ]; then echo -e "\n" > $ADBLOCK_IP_BLACK; fi
   if [ ! -f $ADBLOCK_URL ]; then
-    echo "http://winhelp2002.mvps.org/hosts.txt" > $ADBLOCK_URL
-    echo "http://www.malwaredomainlist.com/hostslist/hosts.txt" >> $ADBLOCK_URL
+    echo "https://winhelp2002.mvps.org/hosts.txt" > $ADBLOCK_URL
+    echo "https://www.malwaredomainlist.com/hostslist/hosts.txt" >> $ADBLOCK_URL
     echo "https://www.getblackbird.net/documentation/Blackbird_Blacklist.txt" >> $ADBLOCK_URL
-    echo "https://adaway.org/hosts.txt" >> $ADBLOCK_URL
     echo "https://hosts-file.net/ad_servers.txt" >> $ADBLOCK_URL
     echo "https://pgl.yoyo.org/adservers/serverlist.php?hostformat=hosts&showintro=0&mimetype=plaintext" >> $ADBLOCK_URL
-    echo "https://bitbucket.org/ancile_development/ancileplugin_networking/raw/4d47fc58ab43fedec6119261fa6ade14dab0975e/data/modify_Hosts/modify_hosts.lst" >> $ADBLOCK_URL
     echo "https://raw.githubusercontent.com/yous/YousList/master/hosts.txt" >> $ADBLOCK_URL
     echo "https://raw.githubusercontent.com/WindowsLies/BlockWindows/master/hosts" >> $ADBLOCK_URL
     echo "https://raw.githubusercontent.com/greatis/Anti-WebMiner/master/hosts" >> $ADBLOCK_URL
   fi
 }
 
-# Get DWS data
-getDWS() {
-  [ ! -f $DWS_RES ] && curl --silent --insecure $DWS_URL > $DWS_RES
-
-  cat $DWS_RES | \
-  awk "
-  /^$2/ { skip=1; }
-  /^$3/ { skip=0; }
-  skip { print; } " | \
-  sed 's/\/.*//g' | \
-  grep '\,\s*$\|\"\s*$' | \
-  cut -d \" -f 2 | 
-  sort -u > $1
-}
-
 # Get host title
 getHostTitle() {
   local url=$1
   local host=$(echo ${url/www.} | awk -F/ '{print$3}')
-  [[ "$host" == "raw.githubusercontent.com" || "$host" == "bitbucket.org" ]] && host="$(echo $url | awk -F/ '{print$5}').${host/raw.}"
+  [[ "$host" == "gitlab.com" || "$host" == "raw.githubusercontent.com" || "$host" == "bitbucket.org" ]] && host="$(echo $url | awk -F/ '{gsub(/raw./,"",$3); print $3 "/" $4 "/" $5}')"
+  [[ "$host" == "v.firebog.net" ]] && host="$(echo $url | awk -F/ '{gsub(/\.txt/,"",$5); print $3 "/" $5}')"
   echo $host | tr "[A-Z]" "[a-z]"
-}
-
-# Collecting a DWS IP addresses
-collectDWSIP() {
-  log "Collecting a DWS IP addresses"
-  getDWS $ADBLOCK_IP "        public static string\[\] IpAddr" "        public static List"
-
-  # Merge ip lists
-  [ $(wc -l < $ADBLOCK_IP_BLACK) -ne 0 ] && cat $ADBLOCK_IP_BLACK >> $ADBLOCK_IP
-
-  # White list applying
-  [[ $(wc -l < $ADBLOCK_IP) -ge 1 && $(wc -l < $ADBLOCK_IP_WHITE) -ne 0 ]] && echo "$(grep -f $ADBLOCK_IP_WHITE -vFhx $ADBLOCK_IP)" > $ADBLOCK_IP
-
-  # Generating and applying ipset
-  if [ $(wc -l < $ADBLOCK_IP) -ge 1 ]; then
-    rm -f $ADBLOCK_IPSET
-
-    # Generating ipset
-    echo "flush $ADBLOCK_IPSET_NAME" > $ADBLOCK_IPSET
-    for ip in `cat $ADBLOCK_IP | sort -u`; do
-      echo -e "add $ADBLOCK_IPSET_NAME $ip" >> $ADBLOCK_IPSET
-    done
-
-    log " - Collected $(wc -l < $ADBLOCK_IP) IP addresses, subnets or ranges of addresses from DWS"
-    log "Generation of adblock.ipset completed"
-  else
-    log "WARNING!!! Used the old adblock.ipset file since we could not get updates" "err"
-  fi
-
-  # Applying ipset
-  ipset -N $ADBLOCK_IPSET_NAME iphash -exist
-  cat $ADBLOCK_IPSET | ipset restore
-}
-
-# Collecting a DWS hosts
-collectDWSHosts() {
-  log "Collecting a DWS hosts"
-  getDWS $ADBLOCK_HOST "        public static string\[\] Hostsdomains" "        };"
-  log " - Collected $(wc -l < $ADBLOCK_HOST) hosts from DWS"
 }
 
 # Collecting hosts from remote host files using the adblock.url
 collectHosts() {
-  log "Collecting hosts using the adblock.url"
+  # log "Collecting hosts using the adblock.url"
   for url in `cat $ADBLOCK_URL`; do
     host_name=$(getHostTitle $url)
     url_counter=$((url_counter+1))
@@ -157,12 +102,6 @@ log "Collecting hosts & ip addresses to block ads & windows spying" "warn"
 
 # Initialize the structure of folders and files if needed
 init
-
-# Collecting a DWS IP addresses
-collectDWSIP
-
-# Collecting a DWS hosts
-collectDWSHosts
 
 # Collecting hosts from remote host files using the adblock.url
 collectHosts
