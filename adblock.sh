@@ -1,13 +1,10 @@
 #!/bin/sh
 
-# ------------------------------------------- Variables ------------------------------------------- #
-
-DWS_URL="https://raw.githubusercontent.com/Nummer/Destroy-Windows-10-Spying/master/DWS/DWSResources.cs"
 ADBLOCK_DIR="/opt/etc/adblock"
-ADBLOCK_URL="$ADBLOCK_DIR/adblock.url"
 ADBLOCK_IP="$ADBLOCK_DIR/adblock.ip"
 ADBLOCK_IP_BLACK="$ADBLOCK_DIR/adblock.ipblack"
 ADBLOCK_IP_WHITE="$ADBLOCK_DIR/adblock.ipwhite"
+ADBLOCK_URL="$ADBLOCK_DIR/adblock.url"
 ADBLOCK_BLACK="$ADBLOCK_DIR/adblock.black"
 ADBLOCK_WHITE="$ADBLOCK_DIR/adblock.white"
 ADBLOCK_HOST="$ADBLOCK_DIR/adblock.host"
@@ -21,12 +18,10 @@ url_counter=0
 host_name=""
 host_title=""
 
-# ------------------------------------------- Functions ------------------------------------------- #
-
 # Logging
 log() {
   args="-t $ADBLOCK_LOG_TAG $1";
-  [ "$STDERR" != "off" ] && args="${args} -s";
+  [ "$STDERR" != "init" ] && args="${args} -s";
   [ $2 ] && args="${args} -p local0.$2";
   logger ${args};
 }
@@ -44,6 +39,7 @@ init() {
   if [ ! -f $ADBLOCK_BLACK ]; then echo -e "ui.skype.com\n" > $ADBLOCK_BLACK; fi
   if [ ! -f $ADBLOCK_IP_WHITE ]; then echo -e "13.107.3.128\n" > $ADBLOCK_IP_WHITE; fi
   if [ ! -f $ADBLOCK_IP_BLACK ]; then echo -e "\n" > $ADBLOCK_IP_BLACK; fi
+  if [[ ! -f $ADBLOCK_IPSET || ! -s $ADBLOCK_IPSET ]]; then echo "flush $ADBLOCK_IPSET_NAME" > $ADBLOCK_IPSET; fi
   if [ ! -f $ADBLOCK_URL ]; then
     echo "https://winhelp2002.mvps.org/hosts.txt" > $ADBLOCK_URL
     echo "https://www.malwaredomainlist.com/hostslist/hosts.txt" >> $ADBLOCK_URL
@@ -65,9 +61,44 @@ getHostTitle() {
   echo $host | tr "[A-Z]" "[a-z]"
 }
 
+# Collecting IP addresses using the adblock.ipblack
+collectIpAddresses() {
+  log "Collecting IP addresses using the adblock.ipblack"
+
+  rm -f $ADBLOCK_IP
+  echo -n "" >> $ADBLOCK_IP
+
+  # Merge ip lists
+  [ $(wc -l < $ADBLOCK_IP_BLACK) -ne 0 ] && cat $ADBLOCK_IP_BLACK >> $ADBLOCK_IP
+
+  # White list applying
+  [[ $(wc -l < $ADBLOCK_IP) -ne 0 && $(wc -l < $ADBLOCK_IP_WHITE) -ne 0 ]] && echo "$(grep -f $ADBLOCK_IP_WHITE -vFhx $ADBLOCK_IP)" > $ADBLOCK_IP
+
+  # Generating and applying ipset
+  if [ $(wc -l < $ADBLOCK_IP) -ne 0 ]; then
+    rm -f $ADBLOCK_IPSET
+
+    # Generating ipset
+    echo "flush $ADBLOCK_IPSET_NAME" > $ADBLOCK_IPSET
+    for ip in `cat $ADBLOCK_IP | sort -u`; do
+      echo -e "add $ADBLOCK_IPSET_NAME $ip" >> $ADBLOCK_IPSET
+    done
+
+    log " - Collected $(wc -l < $ADBLOCK_IP) IP addresses, subnets or ranges of addresses"
+    log "Generation of adblock.ipset completed"
+  else
+    log " - Collected 0 IP addresses"
+  fi
+
+  # Applying ipset
+  ipset -N $ADBLOCK_IPSET_NAME iphash -exist
+  cat $ADBLOCK_IPSET | ipset restore
+}
+
 # Collecting hosts from remote host files using the adblock.url
 collectHosts() {
-  # log "Collecting hosts using the adblock.url"
+  log "Collecting hosts using the adblock.url"
+  
   for url in `cat $ADBLOCK_URL`; do
     host_name=$(getHostTitle $url)
     url_counter=$((url_counter+1))
@@ -102,6 +133,9 @@ log "Collecting hosts & ip addresses to block ads & windows spying" "warn"
 
 # Initialize the structure of folders and files if needed
 init
+
+# Collecting IP addresses using the adblock.ipblack
+collectIpAddresses
 
 # Collecting hosts from remote host files using the adblock.url
 collectHosts
